@@ -88,9 +88,8 @@ jobs:
           sleep 45
           xcrun simctl terminate "$UDID" "$BUNDLE_ID"
           sleep 3
-          for theme in dark crt-green crt-amber light; do shoot "$theme" -theme "$theme"; done
-          shoot approval -demoApproval
-          shoot settings -demoSettings
+          for theme in dark light crt-green crt-amber; do shoot "$theme" -theme "$theme"; done
+          for screen in empty approval sidebar models settings connection files terminal; do shoot "$screen" -screen "$screen"; done
 
       - uses: actions/upload-artifact@v4
         if: always()

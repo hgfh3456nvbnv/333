@@ -120,16 +120,19 @@ public struct Agent: Sendable {
 }
 
 public enum SystemPrompt {
-    public static func build(custom: String, hostLabel: String?) -> String {
+    public static func build(custom: String, hostLabel: String?, planning: Bool = false) -> String {
         var lines = [
-            "You are an assistant running inside a terminal app on the user's iPhone.",
-            "The screen is narrow and monospaced: answer concisely in plain text, use short lines, and keep Markdown to fenced code blocks.",
+            "You are a coding and operations agent running in a chat app on the user's iPhone.",
+            "The screen is narrow: answer concisely. Markdown is rendered (headings, lists, inline code, fenced code blocks, small tables); avoid long lines.",
             "You can read and write files in a small on-device workspace and fetch URLs.",
         ]
+        if planning {
+            lines.append("Plan mode is on: do not change anything. File writes are refused, and commands must be read-only inspection. Investigate as needed, then present a short step-by-step plan and wait for the user to switch modes before carrying it out.")
+        }
         if let hostLabel {
             lines.append("An SSH session to \(hostLabel) is available through the ssh_exec tool. Commands are non-interactive (no TTY): avoid editors, pagers and prompts, and pass flags such as -y where needed. The user approves commands before they run, so prefer a few purposeful commands and explain destructive ones first.")
         } else {
-            lines.append("No SSH host is connected, so you cannot run remote commands. If one is needed, tell the user to add a host in /config and select it with /host.")
+            lines.append("No SSH host is connected, so you cannot run remote commands. If one is needed, tell the user to add an SSH host in Settings and select it below the message box.")
         }
         let trimmed = custom.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { lines.append(trimmed) }
