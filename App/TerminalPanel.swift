@@ -13,22 +13,25 @@ struct TerminalPanel: View {
 
         NavigationStack {
             VStack(spacing: 0) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            banner(palette)
-                            ForEach(model.terminalItems) { item in
-                                TerminalEntry(item: item, palette: palette)
+                GeometryReader { geometry in
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 12) {
+                                banner(palette)
+                                ForEach(model.terminalItems) { item in
+                                    TerminalEntry(item: item, palette: palette)
+                                }
+                                Color.clear.frame(height: 1).id("bottom")
                             }
-                            Color.clear.frame(height: 1).id("bottom")
+                            .padding(14)
+                            // A short log starts at the top, like a fresh terminal.
+                            .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
                         }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .defaultScrollAnchor(.bottom)
-                    .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: model.terminalItems.count) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                        .defaultScrollAnchor(.bottom)
+                        .scrollDismissesKeyboard(.interactively)
+                        .onChange(of: model.terminalItems.count) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
                     }
                 }
 

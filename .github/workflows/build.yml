@@ -80,6 +80,15 @@ jobs:
             xcrun simctl launch "$UDID" "$BUNDLE_ID" -demo "$@"
             sleep 15
             xcrun simctl io "$UDID" screenshot "shots/$name.png"
+            # A capture this small is the bare launch screen. Record what the app was doing instead of
+            # drawing, and look again later to tell a slow launch from a stuck one.
+            if [ "$(stat -f%z "shots/$name.png")" -lt 80000 ]; then
+              pid=$(pgrep -f "TermAI.app/TermAI" | head -1 || true)
+              echo "::warning::$name: nothing drawn 15s after launch (pid ${pid:-none})"
+              if [ -n "$pid" ]; then sample "$pid" 3 -file "shots/$name-sample.txt" > /dev/null 2>&1 || true; fi
+              sleep 20
+              xcrun simctl io "$UDID" screenshot "shots/$name-late.png"
+            fi
             xcrun simctl terminate "$UDID" "$BUNDLE_ID"
             sleep 3
           }
