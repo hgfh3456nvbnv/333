@@ -262,7 +262,7 @@ final class TermCoreTests: XCTestCase {
     func testMarkdownSegmentsAndExport() {
         XCTAssertEqual(Markdown.segments("intro\n\n```sh\nls -la\n\necho hi\n```\nafter"), [
             .init(isCode: false, text: "intro"),
-            .init(isCode: true, text: "ls -la\n\necho hi"),
+            .init(isCode: true, text: "ls -la\n\necho hi", language: "sh"),
             .init(isCode: false, text: "after"),
         ])
         // A fence still open while streaming renders as code.
@@ -347,6 +347,128 @@ final class TermCoreTests: XCTestCase {
         reloaded.deleteSession(id: newer.id)
         XCTAssertEqual(reloaded.sessionSummaries().map(\.title), ["older"])
         XCTAssertEqual(Theme.named("nope"), .minimalDark)
+    }
+
+    // MARK: Connections, permissions, rendering and the file browser
+
+    func testAuthSchemesAndCustomHeaders() throws {
+        var request = ChatRequest(
+            baseURL: "https://example.com/v1", apiKey: "k", model: "m", messages: [], authScheme: .apiKeyHeader,
+            headers: [RequestHeader(name: " HTTP-Referer ", value: "https://app.example"), RequestHeader(name: "", value: "ignored")])
+        var urlRequest = try OpenAIClient.urlRequest(for: request)
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "x-api-key"), "k")
+        XCTAssertNil(urlRequest.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "HTTP-Referer"), "https://app.example")
+
+        // A custom header can replace the default credential header.
+        request.authScheme = .bearer
+        request.headers = [RequestHeader(name: "Authorization", value: "Basic abc")]
+        urlRequest = try OpenAIClient.urlRequest(for: request)
+        XCTAssertEqual(urlRequest.value(forHTTPHeaderField: "Authorization"), "Basic abc")
+    }
+
+    func testProfileCompatibilityAndHeaderStorage() throws {
+        // Profiles written before auth schemes existed still load.
+        let legacy = #"[{"id":"\#(UUID().uuidString)","name":"old","baseURL":"https://x/v1","models":["a"]}]"#
+        let profiles = try JSONDecoder().decode([Profile].self, from: Data(legacy.utf8))
+        XCTAssertEqual(profiles.first?.authScheme, .bearer)
+        XCTAssertEqual(profiles.first?.preferredModel, "a")
+
+        let headers = [RequestHeader(name: "X-Org", value: "acme"), RequestHeader(name: "  ", value: "dropped")]
+        let stored = try XCTUnwrap(RequestHeader.encode(headers))
+        XCTAssertEqual(RequestHeader.decode(stored), [headers[0]])
+        XCTAssertNil(RequestHeader.encode([RequestHeader()]))
+        XCTAssertEqual(RequestHeader.decode(nil), [])
+        XCTAssertEqual(RequestHeader.decode("not json"), [])
+    }
+
+    func testApprovalModes() {
+        XCTAssertNil(ApprovalMode.ask.automaticDecision(forTool: "write_file"))
+        XCTAssertEqual(ApprovalMode.acceptEdits.automaticDecision(forTool: "write_file"), .allow)
+        XCTAssertNil(ApprovalMode.acceptEdits.automaticDecision(forTool: "ssh_exec"))
+        XCTAssertEqual(ApprovalMode.plan.automaticDecision(forTool: "write_file"), .deny)
+        XCTAssertNil(ApprovalMode.plan.automaticDecision(forTool: "fetch_url"))
+        XCTAssertEqual(ApprovalMode.auto.automaticDecision(forTool: "ssh_exec"), .allow)
+
+        XCTAssertEqual(ApprovalMode.named("Manual"), .ask)
+        XCTAssertEqual(ApprovalMode.named("accept-edits"), .acceptEdits)
+        XCTAssertEqual(ApprovalMode.named("edits"), .acceptEdits)
+        XCTAssertEqual(ApprovalMode.named("bypass"), .auto)
+        XCTAssertNil(ApprovalMode.named("sometimes"))
+        // Raw values stored by earlier versions keep their meaning.
+        XCTAssertEqual(ApprovalMode(rawValue: "ask"), .ask)
+        XCTAssertEqual(ApprovalMode(rawValue: "auto"), .auto)
+
+        XCTAssertTrue(SystemPrompt.build(custom: "", hostLabel: nil, planning: true).contains("Plan mode is on"))
+        XCTAssertFalse(SystemPrompt.build(custom: "", hostLabel: nil).contains("Plan mode"))
+    }
+
+    func testMarkdownBlocks() {
+        let text = """
+        # Title
+
+        Some **bold** text
+        second line
+
+        - one
+          - nested
+          continued
+        2. two
+
+        > quoted
+        > more
+
+        ---
+        | a | b |
+        |---|:-:|
+        | 1 | 2 |
+        ```swift
+        let x = 1
+        ```
+        """
+        XCTAssertEqual(Markdown.blocks(text), [
+            .heading(level: 1, text: "Title"),
+            .paragraph("Some **bold** text\nsecond line"),
+            .listItem(marker: "•", indent: 0, text: "one"),
+            .listItem(marker: "•", indent: 1, text: "nested\ncontinued"),
+            .listItem(marker: "2.", indent: 0, text: "two"),
+            .quote("quoted\nmore"),
+            .rule,
+            .table([["a", "b"], ["1", "2"]]),
+            .code(language: "swift", text: "let x = 1"),
+        ])
+        // Not markup: a hashtag, a lone dash and a number without a list delimiter.
+        XCTAssertEqual(Markdown.blocks("#tag\n-\n3 apples"), [.paragraph("#tag\n-\n3 apples")])
+    }
+
+    func testWorkspaceFileBrowsing() throws {
+        let files = FileManager.default
+        try files.createDirectory(at: workspace.appendingPathComponent("src/deep"), withIntermediateDirectories: true)
+        try Data("hello".utf8).write(to: workspace.appendingPathComponent("b.txt"))
+        try Data("x".utf8).write(to: workspace.appendingPathComponent("A.md"))
+        try Data("let a = 1".utf8).write(to: workspace.appendingPathComponent("src/main.swift"))
+        try Data("deep".utf8).write(to: workspace.appendingPathComponent("src/deep/Notes.TXT"))
+        try Data([0xFF, 0xFE, 0x00]).write(to: workspace.appendingPathComponent("blob.bin"))
+        try Data("secret".utf8).write(to: workspace.appendingPathComponent(".hidden"))
+
+        // Folders first, then files by name ignoring case; dotfiles are left out.
+        XCTAssertEqual(WorkspaceFiles.list(root: workspace).map(\.path), ["src", "A.md", "b.txt", "blob.bin"])
+        XCTAssertEqual(WorkspaceFiles.list(root: workspace).first { $0.path == "b.txt" }?.size, 5)
+        XCTAssertEqual(WorkspaceFiles.list(root: workspace, directory: "../..").map(\.path), [])
+
+        XCTAssertEqual(WorkspaceFiles.tree(root: workspace, expanded: []).map(\.path), ["src", "A.md", "b.txt", "blob.bin"])
+        let tree = WorkspaceFiles.tree(root: workspace, expanded: ["src"])
+        XCTAssertEqual(tree.map(\.path), ["src", "src/deep", "src/main.swift", "A.md", "b.txt", "blob.bin"])
+        XCTAssertEqual(tree.map(\.depth), [0, 1, 1, 0, 0, 0])
+        XCTAssertEqual(tree[2].name, "main.swift")
+
+        XCTAssertEqual(WorkspaceFiles.search(root: workspace, query: "TXT").map(\.path), ["b.txt", "src/deep/Notes.TXT"])
+        XCTAssertEqual(WorkspaceFiles.search(root: workspace, query: "nothing"), [])
+
+        XCTAssertEqual(WorkspaceFiles.text(root: workspace, path: "src/main.swift"), "let a = 1")
+        XCTAssertNil(WorkspaceFiles.text(root: workspace, path: "blob.bin"))
+        XCTAssertNil(WorkspaceFiles.text(root: workspace, path: "../outside.txt"))
+        XCTAssertEqual(WorkspaceFiles.text(root: workspace, path: "b.txt", limit: 2), "he\n… [truncated]")
     }
 
     // MARK: Live HTTP (needs a mock server; see Tests/mock_server.py)

@@ -22,13 +22,18 @@ public struct ChatRequest: Sendable {
     public var model: String
     public var messages: [ChatMessage]
     public var tools: [ToolSpec]
+    public var authScheme: Profile.AuthScheme
+    public var headers: [RequestHeader]
 
-    public init(baseURL: String, apiKey: String, model: String, messages: [ChatMessage], tools: [ToolSpec] = []) {
+    public init(baseURL: String, apiKey: String, model: String, messages: [ChatMessage], tools: [ToolSpec] = [],
+                authScheme: Profile.AuthScheme = .bearer, headers: [RequestHeader] = []) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
         self.messages = messages
         self.tools = tools
+        self.authScheme = authScheme
+        self.headers = headers
     }
 }
 
@@ -89,6 +94,20 @@ public struct OpenAIClient: ChatStreaming {
         return url
     }
 
+    /// Adds the API key in the profile's scheme, then the custom headers (which may override it).
+    static func authorize(_ request: inout URLRequest, apiKey: String, scheme: Profile.AuthScheme, headers: [RequestHeader]) {
+        if !apiKey.isEmpty {
+            switch scheme {
+            case .bearer: request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            case .apiKeyHeader: request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            }
+        }
+        for header in headers {
+            let name = header.name.trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { request.setValue(header.value, forHTTPHeaderField: name) }
+        }
+    }
+
     static func encodeMessage(_ message: ChatMessage) -> [String: Any] {
         var object: [String: Any] = ["role": message.role.rawValue, "content": message.content]
         if let calls = message.toolCalls, !calls.isEmpty {
@@ -124,9 +143,7 @@ public struct OpenAIClient: ChatStreaming {
         urlRequest.timeoutInterval = 300
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        if !request.apiKey.isEmpty {
-            urlRequest.setValue("Bearer \(request.apiKey)", forHTTPHeaderField: "Authorization")
-        }
+        authorize(&urlRequest, apiKey: request.apiKey, scheme: request.authScheme, headers: request.headers)
         urlRequest.httpBody = try body(for: request)
         return urlRequest
     }
@@ -190,10 +207,11 @@ public struct OpenAIClient: ChatStreaming {
     }
 
     /// Model IDs advertised by the endpoint's `/models`.
-    public func listModels(baseURL: String, apiKey: String) async throws -> [String] {
+    public func listModels(baseURL: String, apiKey: String, authScheme: Profile.AuthScheme = .bearer,
+                           headers: [RequestHeader] = []) async throws -> [String] {
         var urlRequest = URLRequest(url: try Self.endpoint(baseURL, "/models"))
         urlRequest.timeoutInterval = 30
-        if !apiKey.isEmpty { urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
+        Self.authorize(&urlRequest, apiKey: apiKey, scheme: authScheme, headers: headers)
         let (status, body) = try await HTTP.collect(urlRequest)
         guard (200..<300).contains(status) else { throw APIError.from(status: status, body: body) }
         let object = try? JSONSerialization.jsonObject(with: body)
