@@ -1,23 +1,72 @@
 import Foundation
 
-/// An API endpoint: base URL plus the model IDs available on it. The API key lives in the secret store.
+/// An API endpoint: base URL plus the model IDs available on it. The API key and any custom headers live in the secret store.
 public struct Profile: Codable, Identifiable, Equatable, Sendable {
+    /// How the API key is put on the wire.
+    public enum AuthScheme: String, Codable, Sendable, CaseIterable {
+        /// `Authorization: Bearer <key>`
+        case bearer
+        /// `x-api-key: <key>`
+        case apiKeyHeader = "x-api-key"
+    }
+
     public var id: UUID
     public var name: String
     public var baseURL: String
     public var models: [String]
     public var defaultModel: String?
+    public var authScheme: AuthScheme
 
-    public init(id: UUID = UUID(), name: String, baseURL: String, models: [String] = [], defaultModel: String? = nil) {
+    public init(id: UUID = UUID(), name: String, baseURL: String, models: [String] = [], defaultModel: String? = nil,
+                authScheme: AuthScheme = .bearer) {
         self.id = id
         self.name = name
         self.baseURL = baseURL
         self.models = models
         self.defaultModel = defaultModel
+        self.authScheme = authScheme
+    }
+
+    // Profiles saved before `authScheme` existed have no such key and use bearer.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        baseURL = try container.decode(String.self, forKey: .baseURL)
+        models = try container.decodeIfPresent([String].self, forKey: .models) ?? []
+        defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
+        authScheme = try container.decodeIfPresent(AuthScheme.self, forKey: .authScheme) ?? .bearer
     }
 
     public var secretKey: String { "profile.\(id.uuidString).apikey" }
+    public var headersKey: String { "profile.\(id.uuidString).headers" }
     public var preferredModel: String? { defaultModel ?? models.first }
+}
+
+/// An extra HTTP header sent with every request to a profile's endpoint.
+public struct RequestHeader: Codable, Identifiable, Equatable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var value: String
+
+    public init(id: UUID = UUID(), name: String = "", value: String = "") {
+        self.id = id
+        self.name = name
+        self.value = value
+    }
+
+    /// Header values are often credentials, so a profile's headers are kept in the secret store as one JSON string.
+    /// Returns nil when there is nothing worth storing.
+    public static func encode(_ headers: [RequestHeader]) -> String? {
+        let named = headers.filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !named.isEmpty, let data = try? JSONEncoder().encode(named) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    public static func decode(_ text: String?) -> [RequestHeader] {
+        guard let text, let headers = try? JSONDecoder().decode([RequestHeader].self, from: Data(text.utf8)) else { return [] }
+        return headers
+    }
 }
 
 public struct SSHHost: Codable, Identifiable, Equatable, Sendable {
@@ -148,13 +197,63 @@ public struct SessionSummary: Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
     public var updatedAt: Date
+
+    public init(id: UUID, title: String, updatedAt: Date) {
+        self.id = id
+        self.title = title
+        self.updatedAt = updatedAt
+    }
 }
 
+/// Who decides whether a tool call that changes state or leaves the device may run.
 public enum ApprovalMode: String, Codable, Sendable, CaseIterable {
     /// Ask before anything that changes state or leaves the device.
     case ask
+    /// Workspace file writes run without asking; commands and web requests still ask.
+    case acceptEdits
+    /// Planning only: file writes are refused; commands and web requests still ask.
+    case plan
     /// Run every tool call without asking.
     case auto
+
+    public var title: String {
+        switch self {
+        case .ask: return "Manual"
+        case .acceptEdits: return "Accept edits"
+        case .plan: return "Plan"
+        case .auto: return "Bypass permissions"
+        }
+    }
+
+    public var summary: String {
+        switch self {
+        case .ask: return "Always ask before commands, file edits and web requests"
+        case .acceptEdits: return "File edits run without asking; commands and web requests still ask"
+        case .plan: return "Explore and propose a plan; file edits are blocked"
+        case .auto: return "Everything runs without asking"
+        }
+    }
+
+    /// Parses the argument of `/approve`: the short names as well as the titles.
+    public static func named(_ text: String) -> ApprovalMode? {
+        switch text.lowercased().filter({ $0.isLetter }) {
+        case "ask", "manual": return .ask
+        case "edits", "acceptedits": return .acceptEdits
+        case "plan": return .plan
+        case "auto", "bypass", "bypasspermissions": return .auto
+        default: return nil
+        }
+    }
+
+    /// How a tool call that needs approval is settled without prompting; nil means ask the user.
+    public func automaticDecision(forTool name: String) -> ApprovalDecision? {
+        switch self {
+        case .ask: return nil
+        case .acceptEdits: return name == "write_file" ? .allow : nil
+        case .plan: return name == "write_file" ? .deny : nil
+        case .auto: return .allow
+        }
+    }
 }
 
 public struct AppSettings: Codable, Equatable, Sendable {
