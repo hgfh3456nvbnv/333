@@ -205,7 +205,7 @@ public struct ToolBox: ToolRunning {
 
     private func sshExec(_ call: ToolCall, onOutput: @escaping @Sendable (String) -> Void) async throws -> ToolResult {
         guard let shell else {
-            throw ToolError(message: "no SSH host is connected; the user can add one with /config and select it with /host")
+            throw ToolError(message: "no SSH host is connected; the user can add one in Settings and select it below the message box")
         }
         let command = try require(call, "command")
         let timeout = min(max(call.number("timeout_seconds") ?? 120, 1), 900)

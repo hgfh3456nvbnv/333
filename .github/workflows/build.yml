@@ -80,6 +80,13 @@ jobs:
             xcrun simctl launch "$UDID" "$BUNDLE_ID" -demo "$@"
             sleep 15
             xcrun simctl io "$UDID" screenshot "shots/$name.png"
+            # On a busy runner the launch screen can outlast the wait while the app idles behind it.
+            # A capture this small is still that blank screen, so look again.
+            for _ in 1 2 3 4; do
+              if [ "$(stat -f%z "shots/$name.png")" -ge 80000 ]; then break; fi
+              sleep 10
+              xcrun simctl io "$UDID" screenshot "shots/$name.png"
+            done
             xcrun simctl terminate "$UDID" "$BUNDLE_ID"
             sleep 3
           }
@@ -88,9 +95,8 @@ jobs:
           sleep 45
           xcrun simctl terminate "$UDID" "$BUNDLE_ID"
           sleep 3
-          for theme in dark crt-green crt-amber light; do shoot "$theme" -theme "$theme"; done
-          shoot approval -demoApproval
-          shoot settings -demoSettings
+          for theme in dark light crt-green crt-amber; do shoot "$theme" -theme "$theme"; done
+          for screen in empty approval sidebar models settings connection files terminal; do shoot "$screen" -screen "$screen"; done
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -17,12 +17,12 @@ public enum ParsedInput: Equatable, Sendable {
 public enum Commands {
     public static let all: [SlashCommand] = [
         .init(name: "help", usage: "/help", help: "list commands"),
-        .init(name: "setup", usage: "/setup", help: "add an API profile step by step"),
+        .init(name: "setup", usage: "/setup", help: "add an API connection"),
         .init(name: "config", usage: "/config", help: "open settings"),
         .init(name: "model", usage: "/model [id]", help: "show or switch model"),
         .init(name: "profile", usage: "/profile [name]", help: "show or switch API profile"),
         .init(name: "host", usage: "/host [name|off]", help: "show or switch SSH host"),
-        .init(name: "approve", usage: "/approve [ask|auto]", help: "tool approval mode"),
+        .init(name: "approve", usage: "/approve [ask|edits|plan|auto]", help: "permission mode"),
         .init(name: "theme", usage: "/theme [id]", help: "show or switch theme"),
         .init(name: "system", usage: "/system [text|reset]", help: "show or set the system prompt"),
         .init(name: "new", usage: "/new", help: "start a new session"),
@@ -31,6 +31,8 @@ public enum Commands {
         .init(name: "copy", usage: "/copy", help: "copy the last answer"),
         .init(name: "export", usage: "/export", help: "share the session as Markdown"),
         .init(name: "clear", usage: "/clear", help: "clear the screen"),
+        .init(name: "files", usage: "/files", help: "browse workspace files"),
+        .init(name: "terminal", usage: "/terminal", help: "run commands on the SSH host yourself"),
     ]
 
     public static func parse(_ raw: String) -> ParsedInput {
